@@ -1,79 +1,113 @@
 # Configure AWS provider
 provider "aws" {
-  region = "us-east-1"  
+  region = "us-east-1"
 }
 
-# Create VPC
-resource "aws_vpc" "my_vpc" {
-  cidr_block = "10.0.0.0/16"
+resource "aws_vpc" "myVpc1" {
+  cidr_block = "10.0.0.0/24"
+}
+
+data "aws_availability_zones" "available_zones" {}
+
+resource "aws_subnet" "publicSubnet1" {
+  vpc_id            = aws_vpc.myVpc1.id
+  cidr_block        = "10.0.0.0/25"
+  availability_zone = data.aws_availability_zones.available_zones.names[0]
+
   tags = {
-    Name = "task"
+    Name = "publicSubnet1"
+  }
+}
+resource "aws_subnet" "privateSubnet1" {
+  vpc_id            = aws_vpc.myVpc1.id
+  cidr_block        = "10.0.0.128/25"
+  availability_zone = data.aws_availability_zones.available_zones.names[1]
+
+  tags = {
+    Name = "privateSubnet1"
   }
 }
 
-# Create public subnet
-resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.my_vpc.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = "us-east-1a"  
-  map_public_ip_on_launch = true
+resource "aws_internet_gateway" "myIGW1" {
+  vpc_id = aws_vpc.myVpc1.id
+
   tags = {
-    Name = "public-subnet"
+    Name = "myIGW1"
   }
 }
+resource "aws_route_table" "myPublicRoute" {
+  vpc_id = aws_vpc.myVpc1.id
 
-# Create private subnet
-resource "aws_subnet" "private_subnet" {
-  vpc_id                  = aws_vpc.my_vpc.id
-  cidr_block              = "10.0.2.0/24"
-  availability_zone       = "us-east-1a"  
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.myIGW1.id
+  }
+
   tags = {
-    Name = "private-subnet"
+    Name = "myRoute"
   }
 }
-
-# Create security group for EC2 instance
-resource "aws_security_group" "instance_sg" {
-  name        = "instance-sg"
-  description = "Security group for EC2 instance"
-  vpc_id      = aws_vpc.my_vpc.id
+// Associate subnet with the route table
+resource "aws_route_table_association" "myPublicRouteAssociate" {
+  subnet_id      = aws_subnet.publicSubnet1.id
+  route_table_id = aws_route_table.myPublicRoute.id
+}
+resource "aws_security_group" "mySecureGrp" {
+  name   = "mySecureGrp"
+  vpc_id = aws_vpc.myVpc1.id
 
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] 
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+ ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+ egress {
+    from_port       = 0
+    to_port         = 0
+    protocol        = "-1"
+    cidr_blocks     = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
   tags = {
-    Name = "instance-sg"
+    Name = "mySecureGrp"
   }
 }
-
-# Create EC2 instance
-resource "aws_instance" "test_instance" {
-  ami           = "ami-022e1a32d3f742bd8"  
-  instance_type = "t2.micro"  
-  
-
-  subnet_id              = aws_subnet.public_subnet.id
-  vpc_security_group_ids = [aws_security_group.instance_sg.id]
-
-  user_data = <<-EOF
-    #!/bin/bash
-    echo "Hello, World!" > index.html
-    nohup python -m SimpleHTTPServer 80 &
-    EOF
+resource "aws_instance" "schoolinstance" {
+  ami                    = "ami-053b0d53c279acc90"
+  instance_type          = "t2.micro"
+  key_name               = "helloworld"
+  subnet_id              = aws_subnet.publicSubnet1.id
+  vpc_security_group_ids = [aws_security_group.mySecureGrp.id]
+  associate_public_ip_address = true
+  user_data              = <<-EOF
+              #!/bin/bash
+              echo "hello world!" > hello.txt
+              sudo apt-get update -y
+              sudo apt-get install docker.io -y
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              sudo ./aws/install
+              aws ecr-public get-login-password --region us-east-1 | sudo docker login --username AWS --password-stdin public.ecr.aws/o1m3s8m0
+              sudo docker pull public.ecr.aws/o1m3s8m0/ahmed:latest
+              sudo docker run -d -p 8080:80 public.ecr.aws/o1m3s8m0/ahmed:latest
+  EOF
 
   tags = {
-    Name = "test-instance"
+ Name = "schoolinstance"
   }
 }
-
